@@ -1,0 +1,32 @@
+# build output
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# logs
+*.log
+
+# editor / IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# python
+__pycache__/
+*.pyc
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# compiled artifacts
+*.dll
+*.exp
+*.lib
+*.obj
+*.pdb
+*.ilk
