@@ -41,8 +41,6 @@ cmake --build build
 
 build/version.dll is the output. cmake downloads minhook and lua 5.4.7 while it configures so you need internet the first time
 
-build.bat has the path D:\dev\SHIM hardcoded. change it to wherever you cloned this repo
-
 HORSEY_INSTALL copies the dll and the mods folder into the game folder when you build. its off by default and HORSEY_DIR sets where it goes
 
 ## api version
