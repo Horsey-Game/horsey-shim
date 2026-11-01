@@ -1,4 +1,4 @@
-﻿# horsey shim
+# horsey shim
 
 this is the shim for the horsey game mod loader. its a version.dll proxy that loads into horsey.exe at startup and runs a lua runtime so mods can hook into the game
 
@@ -50,3 +50,13 @@ kShimApiVersion is 1 in src/lua_api.cpp. mods declare api_version in their manif
 ## status
 
 hobby project so expect rough edges
+
+## credits
+
+thanks to everyone who helped with this
+
+- Kars for the icons and support
+- bwhatsonn for ideas
+- JumboDS64 for ideas. check out his game Cain Iddo Break Week https://store.steampowered.com/app/4068390/Cain_Iddo_Break_Week/
+- cpt2angry for ideas
+- everyone in the horsey game discord server
