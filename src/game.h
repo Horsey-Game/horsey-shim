@@ -51,6 +51,7 @@ bool GetHorse(int index, HorseInfo* out);
 int EnumHorseActors(void** out, int max);
 bool GetHorseFromActor(void* actor, HorseInfo* out);
 bool SetHorseField(int index, const char* field, int value);
+bool SetHorseRest(int index);
 
 bool GetHorseGenes(int index, float* out, int count);
 int GeneCount();
@@ -77,12 +78,12 @@ bool GetGeneDef(int index, GeneDef* out);
 void InstallBirthHooks();
 
 int ActiveSceneId();
+int FrameCounter();
 const char* LocationName(int index);
 void LogWorldDebug();
 
 int EnumSpecies(const char** out, int max);
 bool GetWorldSize(int* w, int* h);
 const char* SpawnHerd(const char* species, int tx, int ty, int count, int radius, const char* herd);
-
 
 bool CaptureHorse(int index, const char* path, int size, float scale, float ox, float oy, bool local, const char** err);

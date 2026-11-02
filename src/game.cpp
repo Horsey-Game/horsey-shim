@@ -384,6 +384,35 @@ bool SetHorseField(int index, const char* field, int value)
     }
 }
 
+// frame counter, fester offset für diesen build
+static constexpr uintptr_t kRvaFrameCounter = 0x3ee950;
+static constexpr uintptr_t kRvaHorseSetNeedsRest = 0xb92c0;
+using HorseSetNeedsRestFn = void (*)(uint8_t* horse);
+
+int FrameCounter()
+{
+    uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr);
+    return *(int*)(base + kRvaFrameCounter);
+}
+
+bool SetHorseRest(int index)
+{
+    uint8_t* actor = NthHorseActor(index);
+    if (!actor) return false;
+    __try {
+        uint8_t* horse = *(uint8_t**)(actor + kActorHorse);
+        if (!horse) return false;
+        uintptr_t base = (uintptr_t)GetModuleHandleW(nullptr);
+        // state 6 ignoriert das spiel, also nichts machen
+        if (*(int*)(horse + 0x1c) == 6) return false;
+        HorseSetNeedsRestFn setRest = (HorseSetNeedsRestFn)(base + kRvaHorseSetNeedsRest);
+        setRest(horse);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 int ActiveSceneId()
 {
     if (!GameReady()) return -1;
@@ -946,7 +975,6 @@ const char* SpawnHerd(const char* species, int tx, int ty, int count, int radius
     }
     return nullptr;
 }
-
 
 using HorseDrawFn = void (*)(void* horse, float scale, char thought);
 using PushTranslateFn = void (*)(unsigned long long packed);

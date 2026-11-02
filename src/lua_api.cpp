@@ -81,12 +81,21 @@ static DWORD WINAPI ConsoleThread(LPVOID)
     SetConsoleTitleW(L"SHIM console");
     HWND hwnd = GetConsoleWindow();
     if (hwnd) DeleteMenu(GetSystemMenu(hwnd, FALSE), SC_CLOSE, MF_BYCOMMAND);
+    // icon aus der eingebauten resource, damit die konsole den shim-icon hat
+    if (hwnd) {
+        HMODULE self = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&g_conOpen, &self);
+        HICON icon = LoadIconW(self, MAKEINTRESOURCEW(1));
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+    }
     HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD outMode = 0;
     if (GetConsoleMode(out, &outMode)) SetConsoleMode(out, outMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 
     g_conOpen = true;
-    ConWrite("SHIM console. Type Lua, e.g. shim.get_money()\r\n");
+    // marker für den mod manager, nicht ändern
+    ConWrite("Horsey Shim console. Type Lua, e.g. shim.get_money()\r\n");
     g_conPrompt = true;
     ConWrite("");
 
@@ -425,6 +434,20 @@ static int l_set_horse(lua_State* l)
     const char* field = luaL_checkstring(l, 2);
     int value = lua_isboolean(l, 3) ? lua_toboolean(l, 3) : (int)luaL_checkinteger(l, 3);
     lua_pushboolean(l, SetHorseField(i, field, value));
+    return 1;
+}
+
+static int l_frame(lua_State* l)
+{
+    lua_pushinteger(l, FrameCounter());
+    return 1;
+}
+
+static int l_set_rest(lua_State* l)
+{
+    RequireWorld(l);
+    int i = (int)luaL_checkinteger(l, 1) - 1;
+    lua_pushboolean(l, SetHorseRest(i));
     return 1;
 }
 
@@ -841,6 +864,8 @@ static const luaL_Reg kApi[] = {
     {"set_horse_genome", l_set_horse_genome},
     {"capture_horse", l_capture_horse},
     {"species", l_species},
+    {"frame", l_frame},
+    {"set_rest", l_set_rest},
     {"world_size", l_world_size},
     {"spawn", l_spawn},
     {"after", l_after},

@@ -50,6 +50,9 @@ shim.spend_money(n, silent)   -- returns true if the player could afford it
 local list = shim.horses()    -- array of horse tables, includes wild horses
 shim.set_horse(i, field, v)   -- i is the 1-based position in the last horses() result
                               -- fields: "hungry", "tired" (boolean), "age" (integer)
+shim.set_rest(i)              -- makes the horse at position i tired and needing rest, the way the
+                              -- game does it. Returns true, or false if there is no such horse
+                              -- or the horse is in state 6, which the game ignores
 shim.genes(i)                 -- read only: table of gene name -> expressed value (float),
                               -- for the horse at position i (same numbering as horses())
 shim.compare(i, j)            -- read only: text listing the genes that differ between horses
@@ -86,6 +89,7 @@ shim.active_scene()           -- id of the location the player is in (a building
                               -- -1 means the player is not inside a location, e.g. on the map
 shim.location_name(id)        -- name of a location id; -1 is "map"
 shim.world_size()             -- width, height in tiles (a tile is 32 world units)
+shim.frame()                  -- the game's frame counter (increases every tick)
 shim.species()                -- sorted array of population names, e.g. "fish", "dino", "bear"
 ```
 

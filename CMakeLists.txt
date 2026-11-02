@@ -16,6 +16,7 @@ FetchContent_Declare(minhook
 )
 FetchContent_MakeAvailable(minhook)
 
+# Lua has no CMake build: download the tarball and compile its sources directly.
 FetchContent_Declare(lua
     URL https://www.lua.org/ftp/lua-5.4.7.tar.gz
     SOURCE_SUBDIR none
@@ -34,6 +35,7 @@ add_library(shim SHARED
     src/core.cpp
     src/game.cpp
     src/lua_api.cpp
+    res/shim.rc
     ${LUA_SOURCES}
 )
 
