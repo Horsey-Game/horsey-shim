@@ -293,11 +293,13 @@ static int l_config(lua_State* l)
     if (g_curMod.empty()) return luaL_error(l, "shim.config must be called while the mod is loading");
     fs::path file = GameDir() / "mods" / g_curMod / "config.lua";
 
+    bool broken = false;
     std::error_code ec;
     if (fs::exists(file, ec)) {
         lua_pushcfunction(l, TraceBack);
         if (luaL_loadfile(l, file.string().c_str()) != LUA_OK || lua_pcall(l, 0, 1, -2) != LUA_OK) {
             Log("[%s] config.lua error: %s", g_curMod.c_str(), lua_tostring(l, -1));
+            broken = true;
             lua_pop(l, 1);
         } else if (lua_istable(l, -1)) {
             lua_pushnil(l);
@@ -313,11 +315,16 @@ static int l_config(lua_State* l)
             lua_pop(l, 1);
         } else {
             Log("[%s] config.lua must return a table", g_curMod.c_str());
+            broken = true;
             lua_pop(l, 1);
         }
         lua_pop(l, 1);
     }
 
+    if (broken) {
+        lua_pushvalue(l, 1);
+        return 1;
+    }
     std::vector<std::string> keys;
     lua_pushnil(l);
     while (lua_next(l, 1)) {
@@ -338,7 +345,8 @@ static int l_config(lua_State* l)
             else { char b[64]; snprintf(b, sizeof(b), "%.17g", (double)lua_tonumber(l, -1)); v = b; }
         } else v = QuoteLua(lua_tostring(l, -1));
         lua_pop(l, 1);
-        out += "    " + k + " = " + v + ",\n";
+        bool plain = !k.empty() && (k[0] < '0' || k[0] > '9') && std::all_of(k.begin(), k.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; });
+        out += "    " + (plain ? k : "[" + QuoteLua(k) + "]") + " = " + v + ",\n";
     }
     out += "}\n";
     FILE* f = nullptr;
@@ -710,6 +718,119 @@ static int l_capture_horse(lua_State* l)
     return 1;
 }
 
+// nur einfache dateinamen ohne ordner, damit ein mod nur in seinem eigenen ordner schreibt
+static bool SafeName(const char* name)
+{
+    size_t n = strlen(name);
+    if (n == 0 || n > 96 || name[0] == '.') return false;
+    for (size_t i = 0; i < n; i++) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// pfad zur datei im ordner des mods, dessen name als upvalue an der funktion hängt
+static bool ModFile(lua_State* l, int idx, fs::path& out)
+{
+    const char* name = luaL_checkstring(l, idx);
+    if (!SafeName(name)) return false;
+    const char* folder = lua_tostring(l, lua_upvalueindex(1));
+    out = GameDir() / "mods" / folder / name;
+    return true;
+}
+
+static constexpr size_t kMaxModFileBytes = 64 * 1024 * 1024;
+
+static int l_read_file(lua_State* l)
+{
+    fs::path p;
+    if (!ModFile(l, 1, p)) {
+        lua_pushnil(l);
+        lua_pushstring(l, "bad file name");
+        return 2;
+    }
+    std::ifstream in(p, std::ios::binary);
+    if (!in) {
+        lua_pushnil(l);
+        lua_pushstring(l, "not found");
+        return 2;
+    }
+    std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    lua_pushlstring(l, data.data(), data.size());
+    return 1;
+}
+
+static int l_write_file(lua_State* l)
+{
+    fs::path p;
+    if (!ModFile(l, 1, p)) {
+        lua_pushnil(l);
+        lua_pushstring(l, "bad file name");
+        return 2;
+    }
+    size_t len = 0;
+    const char* data = luaL_checklstring(l, 2, &len);
+    if (len > kMaxModFileBytes) {
+        lua_pushnil(l);
+        lua_pushstring(l, "file is too big");
+        return 2;
+    }
+    // erst in eine temporäre datei schreiben und dann ersetzen, damit nie eine halbe datei liegt
+    fs::path tmp = p;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            lua_pushnil(l);
+            lua_pushstring(l, "cannot write");
+            return 2;
+        }
+        out.write(data, (std::streamsize)len);
+        if (!out) {
+            lua_pushnil(l);
+            lua_pushstring(l, "write failed");
+            return 2;
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, p, ec);
+    if (ec) {
+        fs::remove(tmp, ec);
+        lua_pushnil(l);
+        lua_pushstring(l, "cannot replace the file");
+        return 2;
+    }
+    lua_pushboolean(l, 1);
+    return 1;
+}
+
+static int l_remove_file(lua_State* l)
+{
+    fs::path p;
+    if (!ModFile(l, 1, p)) {
+        lua_pushnil(l);
+        lua_pushstring(l, "bad file name");
+        return 2;
+    }
+    std::error_code ec;
+    fs::remove(p, ec);
+    lua_pushboolean(l, !ec);
+    return 1;
+}
+
+// capture_horse bekommt im mod nur einen dateinamen und legt das bild im ordner des mods ab
+static int l_capture_horse_mod(lua_State* l)
+{
+    fs::path p;
+    if (!ModFile(l, 2, p)) return luaL_error(l, "bad file name for capture_horse");
+    std::string full = p.string();
+    lua_pushstring(l, full.c_str());
+    lua_replace(l, 2);
+    return l_capture_horse(l);
+}
+
 static int l_gene_defs(lua_State* l)
 {
     int n = GeneCount();
@@ -739,12 +860,8 @@ static int l_gene_defs(lua_State* l)
     return 1;
 }
 
-static int l_horse_genome(lua_State* l)
+static void PushGenomeHex(lua_State* l, const uint8_t* g)
 {
-    RequireWorld(l);
-    int i = (int)luaL_checkinteger(l, 1) - 1;
-    uint8_t g[kGenomeBytes];
-    if (!GetHorseGenome(i, g)) return luaL_error(l, "no horse at position %d", i + 1);
     static const char kHex[] = "0123456789abcdef";
     char out[kGenomeBytes * 2];
     for (int b = 0; b < kGenomeBytes; b++) {
@@ -752,6 +869,15 @@ static int l_horse_genome(lua_State* l)
         out[2 * b + 1] = kHex[g[b] & 15];
     }
     lua_pushlstring(l, out, sizeof(out));
+}
+
+static int l_horse_genome(lua_State* l)
+{
+    RequireWorld(l);
+    int i = (int)luaL_checkinteger(l, 1) - 1;
+    uint8_t g[kGenomeBytes];
+    if (!GetHorseGenome(i, g)) return luaL_error(l, "no horse at position %d", i + 1);
+    PushGenomeHex(l, g);
     return 1;
 }
 
@@ -763,26 +889,28 @@ static int HexDigit(char c)
     return -1;
 }
 
+static const char* ParseGenomeHex(const char* hex, size_t len, uint8_t* g)
+{
+    if (len != (size_t)kGenomeBytes * 2) return "genome must be 960 hex digits";
+    for (int b = 0; b < kGenomeBytes; b++) {
+        int hi = HexDigit(hex[2 * b]), lo = HexDigit(hex[2 * b + 1]);
+        if (hi < 0 || lo < 0) return "genome is not hex";
+        g[b] = (uint8_t)(hi << 4 | lo);
+    }
+    return nullptr;
+}
+
 static int l_set_horse_genome(lua_State* l)
 {
     RequireWorld(l);
     int i = (int)luaL_checkinteger(l, 1) - 1;
     size_t len = 0;
     const char* hex = luaL_checklstring(l, 2, &len);
-    if (len != (size_t)kGenomeBytes * 2) {
-        lua_pushnil(l);
-        lua_pushstring(l, "genome must be 960 hex digits");
-        return 2;
-    }
     uint8_t g[kGenomeBytes];
-    for (int b = 0; b < kGenomeBytes; b++) {
-        int hi = HexDigit(hex[2 * b]), lo = HexDigit(hex[2 * b + 1]);
-        if (hi < 0 || lo < 0) {
-            lua_pushnil(l);
-            lua_pushstring(l, "genome is not hex");
-            return 2;
-        }
-        g[b] = (uint8_t)(hi << 4 | lo);
+    if (const char* bad = ParseGenomeHex(hex, len, g)) {
+        lua_pushnil(l);
+        lua_pushstring(l, bad);
+        return 2;
     }
     const char* err = nullptr;
     if (!SetHorseGenome(i, g, &err)) {
@@ -813,13 +941,7 @@ static int l_horse_genome_actor(lua_State* l)
         lua_pushstring(l, "that horse is no longer in the world, or changed");
         return 2;
     }
-    static const char kHex[] = "0123456789abcdef";
-    char out[kGenomeBytes * 2];
-    for (int b = 0; b < kGenomeBytes; b++) {
-        out[2 * b] = kHex[g[b] >> 4];
-        out[2 * b + 1] = kHex[g[b] & 15];
-    }
-    lua_pushlstring(l, out, sizeof(out));
+    PushGenomeHex(l, g);
     return 1;
 }
 
@@ -830,20 +952,11 @@ static int l_set_horse_genome_actor(lua_State* l)
     int id = (int)luaL_checkinteger(l, 2);
     size_t len = 0;
     const char* hex = luaL_checklstring(l, 3, &len);
-    if (len != (size_t)kGenomeBytes * 2) {
-        lua_pushnil(l);
-        lua_pushstring(l, "genome must be 960 hex digits");
-        return 2;
-    }
     uint8_t g[kGenomeBytes];
-    for (int b = 0; b < kGenomeBytes; b++) {
-        int hi = HexDigit(hex[2 * b]), lo = HexDigit(hex[2 * b + 1]);
-        if (hi < 0 || lo < 0) {
-            lua_pushnil(l);
-            lua_pushstring(l, "genome is not hex");
-            return 2;
-        }
-        g[b] = (uint8_t)(hi << 4 | lo);
+    if (const char* bad = ParseGenomeHex(hex, len, g)) {
+        lua_pushnil(l);
+        lua_pushstring(l, bad);
+        return 2;
     }
     const char* err = nullptr;
     if (!SetHorseGenomeByActor(actor, id, g, &err)) {
@@ -862,7 +975,6 @@ static const luaL_Reg kApi[] = {
     {"gene_defs", l_gene_defs},
     {"horse_genome", l_horse_genome},
     {"set_horse_genome", l_set_horse_genome},
-    {"capture_horse", l_capture_horse},
     {"species", l_species},
     {"frame", l_frame},
     {"set_rest", l_set_rest},
@@ -900,13 +1012,42 @@ static fs::path GameDir()
     return fs::path(buf).parent_path();
 }
 
-static constexpr long long kShimApiVersion = 1;
+// version 2: io, os, package und debug sind weg, dateizugriff nur über die file-funktionen
+static constexpr long long kShimApiVersion = 2;
 
 struct ModManifest {
     std::string id;
     long long apiVersion = 0;
 };
 
+// mods/load_order.txt: ein ordnername pro zeile, zuerst diese mods in genau dieser reihenfolge.
+// was nicht in der datei steht, lädt danach in der üblichen reihenfolge des ordners.
+static std::vector<fs::path> LoadOrder(const fs::path& modsDir)
+{
+    std::vector<fs::path> dirs;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(modsDir, ec)) {
+        if (e.is_directory()) dirs.push_back(e.path());
+    }
+    std::vector<fs::path> ordered;
+    std::ifstream file(modsDir / "load_order.txt");
+    std::string line;
+    while (std::getline(file, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        line = line.substr(start);
+        for (size_t i = 0; i < dirs.size(); ++i) {
+            if (dirs[i].filename().string() == line) {
+                ordered.push_back(dirs[i]);
+                dirs.erase(dirs.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        }
+    }
+    ordered.insert(ordered.end(), dirs.begin(), dirs.end());
+    return ordered;
+}
 static bool ReadTextFile(const fs::path& path, std::string& out)
 {
     std::ifstream in(path, std::ios::binary);
@@ -1042,10 +1183,62 @@ static std::string CheckManifest(const fs::path& dir, const std::string& folder)
     return "";
 }
 
+// baut die umgebung für einen mod: eigene shim-tabelle mit file-funktionen für seinen ordner, sonst _G
+static void PushModEnv(lua_State* l, const std::string& folder)
+{
+    lua_newtable(l);
+    lua_pushstring(l, folder.c_str());
+    lua_pushcclosure(l, l_read_file, 1);
+    lua_setfield(l, -2, "read_file");
+    lua_pushstring(l, folder.c_str());
+    lua_pushcclosure(l, l_write_file, 1);
+    lua_setfield(l, -2, "write_file");
+    lua_pushstring(l, folder.c_str());
+    lua_pushcclosure(l, l_remove_file, 1);
+    lua_setfield(l, -2, "remove_file");
+    lua_pushstring(l, folder.c_str());
+    lua_pushcclosure(l, l_capture_horse_mod, 1);
+    lua_setfield(l, -2, "capture_horse");
+    // alle übrigen funktionen kommen aus der globalen shim-tabelle
+    lua_newtable(l);
+    lua_getglobal(l, "shim");
+    lua_setfield(l, -2, "__index");
+    lua_setmetatable(l, -2);
+
+    lua_newtable(l);
+    lua_pushvalue(l, -2);
+    lua_setfield(l, -2, "shim");
+    // fehlende namen fallen auf _G zurück
+    lua_newtable(l);
+    lua_getglobal(l, "_G");
+    lua_setfield(l, -2, "__index");
+    lua_setmetatable(l, -2);
+    lua_remove(l, -2);
+}
+
 void LuaInit()
 {
     L = luaL_newstate();
-    luaL_openlibs(L);
+    // nur die sicheren standardbibliotheken, kein io, os, package oder debug
+    luaL_requiref(L, "_G", luaopen_base, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_UTF8LIBNAME, luaopen_utf8, 1);
+    lua_pop(L, 1);
+    luaL_requiref(L, LUA_COLIBNAME, luaopen_coroutine, 1);
+    lua_pop(L, 1);
+    // fremde dateien und bytecode laden ist verboten
+    lua_pushnil(L);
+    lua_setglobal(L, "dofile");
+    lua_pushnil(L);
+    lua_setglobal(L, "loadfile");
+    lua_pushnil(L);
+    lua_setglobal(L, "load");
     luaL_newlib(L, kApi);
     lua_setglobal(L, "shim");
 
@@ -1059,30 +1252,37 @@ void LuaInit()
     }
 
     Log("shim api version %lld", kShimApiVersion);
-    for (auto& e : fs::directory_iterator(modsDir, ec)) {
-        if (!e.is_directory()) continue;
-        fs::path main = e.path() / "main.lua";
+    for (const fs::path& dir : LoadOrder(modsDir)) {
+        fs::path main = dir / "main.lua";
         if (!fs::exists(main, ec)) continue;
-        std::string folder = e.path().filename().string();
-        if (fs::exists(e.path() / "manifest.json.disabled", ec)) {
+        std::string folder = dir.filename().string();
+        if (fs::exists(dir / "manifest.json.disabled", ec)) {
             Log("mod '%s' is disabled", folder.c_str());
             continue;
         }
-        std::string reason = CheckManifest(e.path(), folder);
+        std::string reason = CheckManifest(dir, folder);
         if (!reason.empty()) {
             Log("mod '%s' skipped: %s", folder.c_str(), reason.c_str());
             continue;
         }
 
         g_curMod = folder;
-        lua_pushcfunction(L, TraceBack);
-        if (luaL_loadfile(L, main.string().c_str()) != LUA_OK || lua_pcall(L, 0, 0, -2) != LUA_OK) {
+        lua_pushcfunction(L, TraceBack);                          // [tb]
+        PushModEnv(L, folder);                                    // [tb, env]
+        if (luaL_loadfile(L, main.string().c_str()) != LUA_OK) {  // [tb, env, msg]
             Log("[%s] load error: %s", g_curMod.c_str(), lua_tostring(L, -1));
-            lua_pop(L, 1);
+            lua_pop(L, 3);
         } else {
-            Log("loaded mod '%s'", g_curMod.c_str());
+            lua_pushvalue(L, -2);                                 // [tb, env, chunk, env]
+            lua_setupvalue(L, -2, 1);                             // _ENV des mods setzen, [tb, env, chunk]
+            if (lua_pcall(L, 0, 0, -3) != LUA_OK) {               // [tb, env, msg]
+                Log("[%s] load error: %s", g_curMod.c_str(), lua_tostring(L, -1));
+                lua_pop(L, 3);
+            } else {
+                Log("loaded mod '%s'", g_curMod.c_str());
+                lua_pop(L, 2);
+            }
         }
-        lua_pop(L, 1);
     }
     g_curMod.clear();
 }
@@ -1105,6 +1305,62 @@ static void FireHorseEvent(const char* event, KnownHorse& k)
 {
     k.info.name = k.name.c_str();
     Fire(event, [&]() { PushHorse(L, k.info); return 1; });
+}
+
+// geburten aus dem game-hook, werden im LuaTick abgearbeitet
+struct BornEvent {
+    int child;
+    int parentA;
+    int parentB;
+};
+static std::mutex g_bornMutex;
+static std::vector<BornEvent> g_bornQueue;
+static constexpr size_t kMaxBornQueue = 1000;
+
+void LuaQueueHorseBorn(int childId, int parentA, int parentB)
+{
+    std::lock_guard<std::mutex> g(g_bornMutex);
+    if (g_bornQueue.size() >= kMaxBornQueue) return;
+    g_bornQueue.push_back({childId, parentA, parentB});
+}
+
+static void FireQueuedBirths()
+{
+    std::vector<BornEvent> births;
+    {
+        std::lock_guard<std::mutex> g(g_bornMutex);
+        births.swap(g_bornQueue);
+    }
+    for (auto& b : births) {
+        Fire("horse_born", [&]() {
+            lua_pushinteger(L, b.child);
+            lua_pushinteger(L, b.parentA);
+            lua_pushinteger(L, b.parentB);
+            return 3;
+        });
+    }
+}
+
+// geld wird jeden tick verglichen, damit jeder schreibweg erfasst wird
+static bool g_moneySeeded;
+static int g_lastMoney;
+
+static void ScanMoney()
+{
+    int m = GetMoney();
+    if (!g_moneySeeded) {
+        g_moneySeeded = true;
+        g_lastMoney = m;
+        return;
+    }
+    if (m == g_lastMoney) return;
+    int old = g_lastMoney;
+    g_lastMoney = m;
+    Fire("money_changed", [&]() {
+        lua_pushinteger(L, m);
+        lua_pushinteger(L, old);
+        return 2;
+    });
 }
 
 static void ScanHorseEvents()
@@ -1268,11 +1524,14 @@ void LuaTick()
     if (!g_ready) {
         g_ready = true;
         g_lastLocation = -2;
+        g_moneySeeded = false;
         LogWorldDebug();
         ScanHorseEvents();
         Fire("ready");
     }
     ScanLocation();
+    ScanMoney();
+    FireQueuedBirths();
     if (++g_scanCounter % kScanInterval == 0) ScanHorseEvents();
     if (g_scanCounter % 65 == 0) CheckModChanges();
     ProcessTimers();

@@ -15,11 +15,25 @@ shim.on("tick", function() end)         -- every game tick (~65/s)
 shim.on("horse_added", function(h) end) -- a horse actor appeared in the world
 shim.on("horse_removed", function(h) end) -- a horse actor left the world (h = last known state)
 shim.on("location_changed", function(from, to, from_id, to_id) end) -- player entered or left a location
+shim.on("horse_born", function(child_id, parent_a_id, parent_b_id) end) -- a foal was bred by the game's herd breeding (record ids)
+shim.on("money_changed", function(new, old) end) -- the player's money changed (any source)
 ```
 
 `location_changed` fires when the player goes into or out of a location (a barn, a store...).
 `from` and `to` are names, e.g. `"map"` or the location's name; `from_id` and `to_id` are the
 ids from `shim.active_scene()`. The change is also written to `SHIM.log`.
+
+`horse_born` fires for each foal the game breeds in its herd breeding, one call per foal.
+The three arguments are record ids: `child_id` is the new foal, `parent_a_id` and `parent_b_id`
+are its parents. Use them with `shim.record(id)`. Wild parents get a record (named `wild <id>`)
+when they breed, so their ids are real too. Only ids that could be read are passed on, and
+events arrive at the next tick after the birth. Births outside herd breeding are not reported.
+
+`money_changed` fires when `shim.get_money()` differs from the value seen on the previous tick.
+`new` and `old` are the amounts. It catches every change, whether it came from the game, from
+`shim.add_money`, `shim.spend_money` or `shim.set_money`. Several changes inside one tick arrive
+as one event with the value at the end of the tick. Nothing fires on the first tick after the
+world loads.
 
 Horse events are checked about every 0.5 s. Horses already present when the world loads
 do not fire `horse_added`. If more than 100 horses change in one check (a save load), SHIM
@@ -132,6 +146,26 @@ Tiles: `tile = floor(x / 32)`.
 shim.spawn("fish", 100, 100)             -- one fish at tile 100,100
 shim.spawn("centipede", 100, 100, 5, 3)  -- five within 3 tiles
 ```
+
+## Files
+
+A mod can only reach files in its own folder, `mods/<name>/`. A file name must be plain:
+letters, digits, `_`, `-` and `.`, no folders, no leading dot, at most 96 characters.
+
+```lua
+local text = shim.read_file("data.txt")            -- the contents, or nil plus a reason if missing
+local ok, err = shim.write_file("data.txt", text)  -- written to a temp file, then replaces the old one
+shim.remove_file("data.txt")                       -- true, also when the file did not exist
+local ok, err = shim.capture_horse(pos, "sprite.png", size, scale, ox, oy, local_flag)
+```
+
+`capture_horse` takes a file name, not a path, and writes the picture into the mod folder.
+The other arguments are the same as before.
+
+Mods run with the Lua libraries `base` (without `dofile`, `loadfile` and `load`), `string`,
+`table`, `math`, `utf8` and `coroutine`. There is no `io`, `os`, `package` or `debug`, and no
+`require`. Manifests for these changes declare `"api_version": 2`. Older shims skip those mods
+instead of running them with missing functions.
 
 ## Config
 

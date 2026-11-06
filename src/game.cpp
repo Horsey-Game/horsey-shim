@@ -12,6 +12,7 @@
 #include <vector>
 #include "game.h"
 #include "log.h"
+#include "lua_api.h"
 #include "scan.h"
 
 using AddMoneyFn = void (*)(void* world, int amount, char silent);
@@ -516,22 +517,60 @@ static void EnsureRecord(uintptr_t horse)
     }
 }
 
+// wartende geburten, werden erst nach dem herd-aufruf geloggt
+struct PendingBirth {
+    uintptr_t child;
+    uintptr_t parentA;
+    uintptr_t parentB;
+};
+static std::vector<PendingBirth> g_pendingBirths;
+
+// liest die record-id eines pferdes, -2 bei speicherfehler
+static int HorseRecordIdAt(uintptr_t horse)
+{
+    __try {
+        return *(int*)(horse + kHorseRecordId);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -2;
+    }
+}
+
 static void HookedHorseInitFromParents(uintptr_t child, uintptr_t parentA, uintptr_t parentB)
 {
     g_initFromParentsOrig(child, parentA, parentB);
     if (g_herdDepth == 0) return;
     EnsureRecord(parentA);
     EnsureRecord(parentB);
+    // geburt merken, ids werden spaeter gelesen
+    g_pendingBirths.push_back({child, parentA, parentB});
+}
+
+// loggt alle geburten der letzten herd-runde
+static void FlushPendingBirths()
+{
+    for (const PendingBirth& b : g_pendingBirths) {
+        int childId = HorseRecordIdAt(b.child);
+        int idA = HorseRecordIdAt(b.parentA);
+        int idB = HorseRecordIdAt(b.parentB);
+        Log("horse born: child %d from parents %d and %d", childId, idA, idB);
+        // nur gueltige ids an lua weitergeben
+        if (childId >= 0 && idA >= 0 && idB >= 0) LuaQueueHorseBorn(childId, idA, idB);
+    }
+    g_pendingBirths.clear();
 }
 
 static void HookedHerdInterbreed(uintptr_t actorA, uintptr_t actorB)
 {
+    // alte reste verwerfen, falls ein frueherer aufruf abbrach
+    if (g_herdDepth == 0) g_pendingBirths.clear();
     g_herdDepth++;
     __try {
         g_herdInterbreedOrig(actorA, actorB);
     } __finally {
         g_herdDepth--;
     }
+    // erst nach dem aeussersten herd-aufruf loggen
+    if (g_herdDepth == 0) FlushPendingBirths();
 }
 
 void InstallBirthHooks()

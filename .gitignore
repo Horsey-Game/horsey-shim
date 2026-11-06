@@ -30,3 +30,5 @@ Desktop.ini
 *.obj
 *.pdb
 *.ilk
+mods/autonamer/
+mods/mapview/

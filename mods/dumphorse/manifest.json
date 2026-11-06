@@ -1,0 +1,10 @@
+{
+  "id": "dumphorse",
+  "name": "Dump Horse",
+  "version": "0.1.0",
+  "author": "Chris",
+  "description": "Dumps one horse's expressed genes to a text file for checking the body builder port.",
+  "api_version": 2,
+  "entry": "main.lua",
+  "dependencies": []
+}

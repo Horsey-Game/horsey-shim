@@ -20,8 +20,16 @@ static void HookedGameFrame()
     LuaTick();
 }
 
+static constexpr DWORD kGameBuildStamp = 0x6A078A79;
+
 DWORD WINAPI CoreThread(LPVOID)
 {
+    auto* base = (uint8_t*)GetModuleHandleW(nullptr);
+    DWORD stamp = *(DWORD*)(base + *(int32_t*)(base + 0x3c) + 8);
+    if (stamp != kGameBuildStamp) {
+        Log("game build %08lX is not supported, shim stays off", stamp);
+        return 0;
+    }
     uintptr_t addr = FindPattern(
         "40 53 48 83 EC 40 0F 29 74 24 30 0F 29 7C 24 20 E8 ? ? ? ? 80 3D ? ? ? ? 00 0F 57 C0 F3 0F 2A 05 ? ? ? ?");
     if (!addr) {
@@ -38,7 +46,10 @@ DWORD WINAPI CoreThread(LPVOID)
         Log("MH_CreateHook failed");
         return 0;
     }
-    GameInit();
+    if (!GameInit()) {
+        Log("game does not match this shim, hooks not installed");
+        return 0;
+    }
     LuaInit();
     InstallBirthHooks();
     if (MH_EnableHook((void*)addr) != MH_OK) {
